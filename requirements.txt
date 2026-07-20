@@ -3,4 +3,4 @@ yfinance
 matplotlib
 pandas
 numpy
-
+streamlit-javascript
