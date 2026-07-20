@@ -10,7 +10,7 @@ warnings.filterwarnings('ignore')
 st.set_page_config(page_title="台股全功能智能選股與損益診斷系統", layout="centered")
 st.title("🚀 台股智能篩選 ✕ 即時損益診斷完全體 App")
 
-# 初始化 Session State 用以在手機網頁儲存個人庫存（包含股數與買入成本）
+# 初始化 Session State 用以在手機網頁儲存個人庫存
 if 'my_portfolio' not in st.session_state:
     st.session_state.my_portfolio = [
         {"代號": "2330", "股數": 1000, "成本": 620.0},  # 預設範例：台積電1張，成本620元
@@ -103,31 +103,34 @@ df_all_market = fetch_complete_market_data(full_load_pool)
 # ==========================================
 st.header("🔍 多功能智能策略快篩池")
 
-df_filtered = df_all_market.copy()
+if not df_all_market.empty:
+    df_filtered = df_all_market.copy()
 
-# 套用短/中/長線動態濾網
-if period == "短線" and use_short_ma:
-    df_filtered = df_filtered[(df_filtered['即時價位'] >= df_filtered['5MA']) & (df_filtered['即時價位'] >= df_filtered['10MA'])]
-elif period == "中線" and use_mid_growth:
-    df_filtered = df_filtered[df_filtered['營收獲利雙正'] == True]
-elif period == "長線":
-    if use_long_yield:
-        df_filtered = df_filtered[df_filtered['現金殖利率(%)'] >= l_yield]
-    if use_long_pe:
-        df_filtered = df_filtered[(df_filtered['類別'] != 'EQUITY') | (df_filtered['本益比'] <= l_pe)]
+    # 套用短/中/長線動態濾網
+    if period == "短線" and use_short_ma:
+        df_filtered = df_filtered[(df_filtered['即時價位'] >= df_filtered['5MA']) & (df_filtered['即時價位'] >= df_filtered['10MA'])]
+    elif period == "中線" and use_mid_growth:
+        df_filtered = df_filtered[df_filtered['營收獲利雙正'] == True]
+    elif period == "長線":
+        if use_long_yield:
+            df_filtered = df_filtered[df_filtered['現金殖利率(%)'] >= l_yield]
+        if use_long_pe:
+            df_filtered = df_filtered[(df_filtered['類別'] != 'EQUITY') | (df_filtered['本益比'] <= l_pe)]
 
-# 通用風險與品質指標調控（滑桿即時連動）
-df_filtered = df_filtered[df_filtered['夏普值'] >= l_sharpe]
-df_filtered = df_filtered[df_filtered['Beta值'] <= combo_beta]
+    # 通用風險與品質指標調控（滑桿即時連動）
+    df_filtered = df_filtered[df_filtered['夏普值'] >= l_sharpe]
+    df_filtered = df_filtered[df_filtered['Beta值'] <= combo_beta]
 
-st.subheader(f"🎯 當前符合【{period} 自訂參數】的標的名單")
-if df_filtered.empty:
-    st.warning("⚠️ 目前設定的量化條件過於嚴格，暫無相符標的。")
+    st.subheader(f"🎯 當前符合【{period} 自訂參數】的標的名單")
+    if df_filtered.empty:
+        st.warning("⚠️ 目前設定的量化條件過於嚴格，暫無相符標的。")
+    else:
+        st.dataframe(
+            df_filtered[['代號', '名稱', '即時價位', '漲跌幅(%)', '現金殖利率(%)', '夏普值', 'Beta值']], 
+            use_container_width=True, hide_index=True
+        )
 else:
-    st.dataframe(
-        df_filtered[['代號', '名稱', '即時價位', '漲跌幅(%)', '現金殖利率(%)', '夏普值', 'Beta值']], 
-        use_container_width=True, hide_index=True
-    )
+    st.error("⏳ 無法從交易所讀取數據，請稍後再試。")
 
 st.markdown("---")
 
@@ -136,7 +139,7 @@ st.markdown("---")
 # ==========================================
 st.header("💼 我的實時庫存記帳與配置優化")
 
-# 建立新增資產的輸入表單（支援代號、股數、買入成本）
+# 建立新增資產的輸入表單
 with st.form("add_stock_form", clear_on_submit=True):
     col_t, col_s, col_c, col_b = st.columns([1.5, 1.5, 1.5, 1])
     add_ticker = col_t.text_input("➕ 新增持股代號:", placeholder="例如: 2317")
@@ -147,7 +150,6 @@ with st.form("add_stock_form", clear_on_submit=True):
     if submit_btn and add_ticker:
         t_clean = add_ticker.strip()
         existing = False
-        # 如果庫存已存在，自動加權平均計成本，不存在則新增一筆
         for item in st.session_state.my_portfolio:
             if item["代號"] == t_clean:
                 total_shares = item["股數"] + add_shares
@@ -173,7 +175,7 @@ if len(st.session_state.my_portfolio) > 0 and not df_all_market.empty:
     for item in st.session_state.my_portfolio:
         t_info = df_all_market[df_all_market['代號'] == item['代號']]
         if not t_info.empty:
-            r_info = t_info.iloc
+            r_info = t_info.iloc[0] # 精確鎖定第一列
             current_market_val = r_info['即時價位'] * item['股數']
             current_cost_val = item['成本'] * item['股數']
             unrealized_profit = current_market_val - current_cost_val
@@ -183,83 +185,91 @@ if len(st.session_state.my_portfolio) > 0 and not df_all_market.empty:
             total_cost_value += current_cost_val
             
             portfolio_rows.append({
-                "代號": item['代號'], "名稱": r_info['名稱'], "買入成本": item['成本'],
-                "即時市價": r_info['即時價位'], "目前股數": item['股數'],
-                "目前市值 (元)": round(current_market_val, 0), "未實現損益": round(unrealized_profit, 0),
-                "報酬率 (%)": round(roi_pct, 2), "夏普值": r_info['夏普值'], "Beta值": r_info['Beta值']
+                "代號": item['代號'], 
+                "名稱": r_info['名稱'], 
+                "買入成本": item['成本'],
+                "即時市價": r_info['即時價位'], 
+                "目前股數": item['股數'],
+                "目前市值 (元)": round(current_market_val, 0), 
+                "未實現損益": round(unrealized_profit, 0),
+                "報酬率 (%)": round(roi_pct, 2), 
+                "夏普值": r_info['夏普值'], 
+                "Beta值": r_info['Beta值']
             })
             
-    df_p_summary = pd.DataFrame(portfolio_rows)
-    df_p_summary["資產權重 (%)"] = round((df_p_summary["目前市值 (元)"] / total_market_value) * 100, 1)
-    
-    total_profit = total_market_value - total_cost_value
-    total_roi = (total_profit / total_cost_value) * 100 if total_cost_value > 0 else 0.0
-    
-    # 頂部三大即時數據看板呈現
-    st.subheader("💰 投資組合即時財富資產看板")
-    col_m1, col_m2, col_m3 = st.columns(3)
-    col_m1.metric("目前庫存總市值", f"${int(total_market_value):,} 元")
-    col_m2.metric("總未實現損益", f"+${int(total_profit):,}" if total_profit >= 0 else f"-${int(abs(total_profit)):,}", f"{round(total_roi, 2)}%")
-    col_m3.metric("投入總本金", f"${int(total_cost_value):,} 元")
-    
-    # 即時損益明細表
-    st.markdown("**🔍 持有股未實現損益明細明細表**")
-    st.dataframe(
-        df_p_summary[["代號", "名稱", "買入成本", "即時市價", "目前股數", "目前市值 (元)", "未實現損益", "報酬率 (%)", "資產權重 (%)"]],
-        use_container_width=True, hide_index=True
-    )
-    
-    # 📌 AI 專家系統資產品質健康度診斷與再平衡指引
-    st.subheader("💡 專家系統庫存體質診斷與策略再平衡建議")
-    
-    # 計算組合加權指標
-    weighted_beta = np.sum(df_p_summary["Beta值"] * (df_p_summary["目前市值 (元)"] / total_market_value))
-    weighted_sharpe = np.sum(df_p_summary["夏普值"] * (df_p_summary["目前市值 (元)"] / total_market_value))
-    
-    st.write(f"📊 組合整體加權 **Beta風險值為: {round(weighted_beta, 2)}** | 全包加權 **夏普回報率為: {round(weighted_sharpe, 2)}**")
-    
-    st.info("📢 **【操作指引】**")
-    
-    # 進行個股汰弱換強與續抱檢索
-    high_risk_trapped = df_p_summary[(df_p_summary['報酬率 (%)'] < -10) & (df_p_summary['夏普值'] <= 0)]
-    high_quality_profit = df_p_summary[(df_p_summary['報酬率 (%)'] > 5) & (df_p_summary['夏普值'] >= 1.2)]
-    
-    if not high_risk_trapped.empty:
-        for _, row in high_risk_trapped.iterrows():
-            st.error(f"❌ **汰弱換強警告**：您持有的【{row['代號']} {row['名稱']}】目前處於套牢虧損（{row['報酬率 (%)']}%）狀態，且其回報品質**夏普值為低效能的 {row['夏普值']}**。建議利用網頁上方策略快篩池篩出的優質龍頭資產進行汰弱換強移轉。")
+    if portfolio_rows:
+        df_p_summary = pd.DataFrame(portfolio_rows)
+        
+        # 核心防錯：強制在計算權重前確保「目前市值 (元)」欄位存在
+        if "目前市值 (元)" in df_p_summary.columns and total_market_value > 0:
+            df_p_summary["資產權重 (%)"] = round((df_p_summary["目前市值 (元)"] / total_market_value) * 100, 1)
+        else:
+            df_p_summary["資產權重 (%)"] = 0.0
             
-    if not high_quality_profit.empty:
-        for _, row in high_quality_profit.iterrows():
-            st.success(f"💎 **強勢資產續抱指引**：您的庫存【{row['代號']} {row['名稱']}】目前正穩定獲利（+{row['報酬率 (%)']}%），且夏普值高達卓越的 {row['夏普值']}。這屬於高回報效率的核心資產，長線建議抱緊，切勿輕易賣出。")
+        total_profit = total_market_value - total_cost_value
+        total_roi = (total_profit / total_cost_value) * 100 if total_cost_value > 0 else 0.0
+        
+        # 頂部三大即時數據看板呈現
+        st.subheader("💰 投資組合即時財富資產看板")
+        col_m1, col_m2, col_m3 = st.columns(3)
+        col_m1.metric("目前庫存總市值", f"${int(total_market_value):,} 元")
+        col_m2.metric("總未實現損益", f"+${int(total_profit):,}" if total_profit >= 0 else f"-${int(abs(total_profit)):,}", f"{round(total_roi, 2)}%")
+        col_m3.metric("投入總本金", f"${int(total_cost_value):,} 元")
+        
+        # 即時損益明細表
+        st.markdown("**🔍 持有股未實現損益明細明細表**")
+        st.dataframe(
+            df_p_summary[["代號", "名稱", "買入成本", "即時市價", "目前股數", "目前市值 (元)", "未實現損益", "報酬率 (%)", "資產權重 (%)"]],
+            use_container_width=True, hide_index=True
+        )
+        
+        # 📌 AI 專家系統資產品質健康度診斷與再平衡指引
+        st.subheader("💡 專家系統庫存體質診斷與策略再平衡建議")
+        weighted_beta = np.sum(df_p_summary["Beta值"] * (df_p_summary["目前市值 (元)"] / total_market_value))
+        weighted_sharpe = np.sum(df_p_summary["夏普值"] * (df_p_summary["目前市值 (元)"] / total_market_value))
+        
+        st.write(f"📊 組合整體加權 **Beta風險值為: {round(weighted_beta, 2)}** | 全包加權 **夏普回報率為: {round(weighted_sharpe, 2)}**")
+        
+        st.info("📢 **【操作指引】**")
+        high_risk_trapped = df_p_summary[(df_p_summary['報酬率 (%)'] < -10) & (df_p_summary['夏普值'] <= 0)]
+        high_quality_profit = df_p_summary[(df_p_summary['報酬率 (%)'] > 5) & (df_p_summary['夏普值'] >= 1.2)]
+        if not high_risk_trapped.empty:
+            for _, row in high_risk_trapped.iterrows():
+                st.error(f"❌ **汰弱換強警告**：您持有的【{row['代號']} {row['名稱']}】目前處於套牢虧損（{row['報酬率 (%)']}%）狀態，且其回報品質夏普值為低效能的 **{row['夏普值']}**。建議利用網頁上方策略快篩池篩出的優質龍頭資產進行汰弱換強移轉。")
+                
+        if not high_quality_profit.empty:
+            for _, row in high_quality_profit.iterrows():
+                st.success(f"💎 **強勢資產續抱指引**：您的庫存【{row['代號']} {row['名稱']}】目前正穩定獲利（+{row['報酬率 (%)']}%），且夏普值高達卓越的 {row['夏普值']}。這屬於高回報效率的核心資產，長線建議抱緊，切勿輕意賣出。")
 
-    # 診斷組合風險 (Beta)
-    if weighted_beta > 1.1:
-        st.warning("⚠️ **避險調配提示**：由於整體組合加權 Beta 指標偏高，當大盤系統性回檔時波動較劇烈。建議利用上方篩選池，將部分資金調配至穩健度極高或帶有負相關的美債 ETF（如 00679B）平衡風險。")
+        # 診斷組合風險 (Beta)
+        if weighted_beta > 1.1:
+            st.warning("⚠️ **避險調配提示**：由於整體組合加權 Beta 指標偏高，當大盤系統性回檔時波動較劇烈。建議利用上方篩選池，將部分資金調配至穩健度極高或帶有負相關的美債 ETF（如 00679B）平衡風險。")
 
-    # 庫存權重分佈圓餅圖
-    fig_p, ax_p = plt.subplots(figsize=(6, 3))
-    ax_p.pie(df_p_summary["目前市值 (元)"], labels=df_p_summary["名稱"], autopct='%1.1f%%', startangle=90)
-    ax_p.axis('equal')
-    st.pyplot(fig_p)
+        # 庫存權重分佈圓餅圖
+        fig_p, ax_p = plt.subplots(figsize=(6, 3))
+        ax_p.pie(df_p_summary["目前市值 (元)"], labels=df_p_summary["名稱"], autopct='%1.1f%%', startangle=90)
+        ax_p.axis('equal')
+        st.pyplot(fig_p)
 
 else:
     st.info("💡 目前您的個人庫存箱是空的。請在上方欄位輸入您持建立的台股代號、股數與成本，系統將會啟動自動記帳與健康度診斷。")
 
 st.markdown("---")
 
-# ==========================================
+# ==========================================================
 # 📈 區塊三：焦點標的技術指標 K 線走勢圖
-# ==========================================
-main_stock = df_all_market[df_all_market['代號'] == code]
-if not main_stock.empty:
-    r = main_stock.iloc
-    st.subheader(f"📈 焦點技術均線走勢圖：{r['代號']} {r['名稱']}")
-    hist = r['歷史日線'].tail(40)
-    
-    fig, ax = plt.subplots(figsize=(10, 4))
-    ax.plot(hist.index, hist['Close'], label='最新成交價', color='#1f77b4', linewidth=2.5)
-    ax.plot(hist.index, hist['Close'].rolling(5).mean(), label='5 MA (短線強弱線)', color='#ff7f0e', linestyle='--')
-    ax.plot(hist.index, hist['Close'].rolling(10).mean(), label='10 MA', color='#2ca02c', linestyle=':')
-    ax.grid(True, alpha=0.3)
-    ax.legend(loc="upper left")
-    st.pyplot(fig)
+# ==========================================================
+if not df_all_market.empty:
+    main_stock = df_all_market[df_all_market['代號'] == code]
+    if not main_stock.empty:
+        r = main_stock.iloc
+        st.subheader(f"📈 焦點技術均線走勢圖：{r['代號']} {r['名稱']}")
+        hist = r['歷史日線'].tail(40)
+        
+        fig, ax = plt.subplots(figsize=(10, 4))
+        ax.plot(hist.index, hist['Close'], label='最新成交價', color='#1f77b4', linewidth=2.5)
+        ax.plot(hist.index, hist['Close'].rolling(5).mean(), label='5 MA (短線強弱線)', color='#ff7f0e', linestyle='--')
+        ax.plot(hist.index, hist['Close'].rolling(10).mean(), label='10 MA', color='#2ca02c', linestyle=':')
+        ax.grid(True, alpha=0.3)
+        ax.legend(loc="upper left")
+        st.pyplot(fig)
