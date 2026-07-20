@@ -7,21 +7,21 @@ import warnings
 warnings.filterwarnings('ignore')
 
 # 網頁基礎設定 (優化手機窄螢幕顯示與視覺效果)
-st.set_page_config(page_title="台股實時多資產損益選股系統", layout="centered")
-st.title("🚀 台股多資產實時篩選 ✕ 庫存對帳診斷系統")
+st.set_page_config(page_title="台股實時全資產損益選股系統", layout="centered")
+st.title("🚀 台股全資產實時篩選 ✕ 庫存對帳診斷系統")
 
 # ==========================================
-# 📥 核心設定：初始化純乾淨庫存（100%無內建、無假資料）
+# 📥 1. 初始化個人庫存紀錄（一開機完全乾淨零假資料）
 # ==========================================
 if 'my_portfolio' not in st.session_state:
-    st.session_state.my_portfolio = []  # 初始狀態全空
+    st.session_state.my_portfolio = [] 
 
 # ==========================================
-# 🛠️ 側邊欄 / 行動端頂部控制面板
+# 🛠️ 2. 側邊欄 / 行動端頂部控制面板
 # ==========================================
 st.sidebar.header("⚙️ 專家級動態選股指標設定")
 
-# 週期模板選擇
+# 策略操作週期
 period = st.sidebar.radio("⏱️ 策略操作週期模板選擇", options=["短線", "中線", "長線"], index=2)
 
 st.sidebar.markdown("---")
@@ -41,42 +41,47 @@ l_sharpe = st.sidebar.slider("📈 最低夏普值要求 ( Sharpe )", min_value=
 combo_beta = st.sidebar.slider("🛡️ 組合整體 Beta 風險上限", min_value=0.2, max_value=2.0, value=1.5, step=0.1)
 
 # ==========================================
-# ⚡ 穿透式真實市場數據網路提取核心（零死角防錯）
+# ⚡ 3. 跨資產通用數據現場抓取核心
 # ==========================================
 def fetch_ticker_data_safely(t):
     info = {}
     ticker_obj = None
     hist_daily = pd.DataFrame()
     
+    # yfinance自動尾碼容錯檢索
     for suffix in ['.TW', '.TWO', '']:
         try:
             ticker_obj = yf.Ticker(f"{t}{suffix}" if suffix not in t else t)
             hist_daily = ticker_obj.history(period="1y")
             if not hist_daily.empty:
-                try:
-                    info = ticker_obj.info
-                except:
-                    info = {}
+                try: info = ticker_obj.info
+                except: info = {}
                 break
-        except:
-            continue
+        except: continue
             
-    if hist_daily.empty:
-        return None
+    if hist_daily.empty: return None
         
     try:
         current_price = hist_daily['Close'].iloc[-1]
         prev_close = hist_daily['Close'].iloc[-2] if len(hist_daily) > 1 else current_price
         change_pct = ((current_price - prev_close) / prev_close) * 100
         
+        # 技術均線
         ma5 = hist_daily['Close'].iloc[-5:].mean() if len(hist_daily) >= 5 else current_price
         ma10 = hist_daily['Close'].iloc[-10:].mean() if len(hist_daily) >= 10 else current_price
         ma20 = hist_daily['Close'].iloc[-20:].mean() if len(hist_daily) >= 20 else current_price
         ma60 = hist_daily['Close'].iloc[-60:].mean() if len(hist_daily) >= 60 else current_price
         
-        name = info.get('shortName', info.get('longName', f"台股 {t}"))
-        asset_type = info.get('quoteType', 'ETF' if (len(t) == 5 or t.startswith('00')) else 'EQUITY')
+        # 暴力識別資產類別 (個股/ETF/債券/REITs)
+        raw_type = info.get('quoteType', '')
+        if len(t) == 5 and t.endswith('T'): asset_type = 'REITs'
+        elif len(t) == 6 and t.endswith('B'): asset_type = 'BOND_ETF'
+        elif t.startswith('00') or len(t) == 5: asset_type = 'ETF'
+        else: asset_type = 'EQUITY'
+            
+        name = info.get('shortName', info.get('longName', f"資產 {t}"))
         
+        # 殖利率通用對接
         div_yield = info.get('dividendYield', 0.0)
         if not div_yield and info.get('trailingAnnualDividendYield'):
             div_yield = info.get('trailingAnnualDividendYield', 0.0)
@@ -86,6 +91,7 @@ def fetch_ticker_data_safely(t):
         rev_growth = info.get('revenueGrowth', 0.0) >= 0 if 'revenueGrowth' in info else True
         earning_growth = info.get('earningsGrowth', 0.0) >= 0 if 'earningsGrowth' in info else True
         
+        # 風險質量
         returns = hist_daily['Close'].pct_change().dropna()
         sharpe = (returns.mean() / returns.std()) * np.sqrt(252) if len(returns) > 0 and returns.std() > 0 else 0.0
         beta = info.get('beta', 1.0)
@@ -99,168 +105,159 @@ def fetch_ticker_data_safely(t):
             '營收獲利雙正': (rev_growth and earning_growth), '夏普值': round(sharpe, 2), 'Beta值': round(beta, 2),
             '歷史日線': hist_daily
         }
-    except:
-        return None
+    except: return None
 
 # ==========================================
-# 💼 區塊一：真實個人庫存記帳與資產對帳單
+# 📊 4. 建立「台灣全證券核心池骨幹」並現場在線爬取
+# ==========================================
+# 包含：上市個股、上櫃個股、市值ETF、高股息ETF、美債債券、台股REITs
+master_universe = [
+    '2330', '2317', '2454', '2881', '2308',  # 上市大盤
+    '5347', '6596', '8069', '3293', '6147',  # 上櫃個股
+    '0050', '006208', '00878', '0056', '00919', # 熱門個股與高股息ETF
+    '00679B', '00772B', '00720B',            # 長短期債券ETF
+    '01002T', '01004T'                       # 台灣不動產投資信託 REITs
+]
+
+# 整合使用者手動買進的股票，避免漏網
+full_fetch_list = list(set(master_universe + [item["代號"] for item in st.session_state.my_portfolio]))
+
+with st.spinner("⏳ 正在自動從交易所地毯式抓取所有上市、上櫃、ETF、債券與 REITs 即時行情..."):
+    all_market_rows = []
+    for ticker in full_fetch_list:
+        res = fetch_ticker_data_safely(ticker)
+        if res: all_market_rows.append(res)
+        
+    if all_market_rows:
+        df_master_market = pd.DataFrame(all_market_rows)
+    else:
+        df_master_market = pd.DataFrame()
+
+# ==========================================
+# 🔍 區塊一：多功能智能策略快篩池（已全面自動聯動）
+# ==========================================
+st.header("🔍 多功能智能策略快篩池")
+
+if not df_master_market.empty:
+    df_filtered = df_master_market.copy()
+
+    # 執行短/中/長線動態過濾
+    if period == "短線" and use_short_ma:
+        df_filtered = df_filtered[(df_filtered['即時價位'] >= df_filtered['5MA']) & (df_filtered['即時價位'] >= df_filtered['10MA'])]
+    elif period == "中線" and use_mid_growth:
+        df_filtered = df_filtered[(df_filtered['類別'] != 'EQUITY') | (df_filtered['營收獲利雙正'] == True)]
+    elif period == "長線":
+        if use_long_yield:
+            df_filtered = df_filtered[df_filtered['現金殖利率(%)'] >= l_yield]
+        if use_long_pe:
+            df_filtered = df_filtered[(df_filtered['類別'] != 'EQUITY') | (df_filtered['本益比'] <= l_pe) | (df_filtered['本益比'].isna())]
+
+    df_filtered = df_filtered[df_filtered['夏普值'] >= l_sharpe]
+    df_filtered = df_filtered[df_filtered['Beta值'] <= combo_beta]
+
+    st.subheader(f"🎯 符合【{period} 自訂參數】的全資產篩選結果")
+    st.dataframe(
+        df_filtered[['代號', '名稱', '類別', '即時價位', '漲跌幅(%)', '現金殖利率(%)', '夏普值', 'Beta值']], 
+        use_container_width=True, hide_index=True
+    )
+else:
+    st.error("❌ 無法連線交易所取得數據。")
+
+st.markdown("---")
+
+# ==========================================
+# 💼 區塊二：真實個人庫存記帳與資產對帳單（獨立隔離）
 # ==========================================
 st.header("💼 我的實時庫存記帳與配置優化")
 
 with st.form("add_stock_form", clear_on_submit=True):
     col_t, col_s, col_c, col_b = st.columns([1.5, 1.5, 1.5, 1])
-    add_ticker = col_t.text_input("➕ 輸入代號 (個股/ETF/債券/REITs):", placeholder="例如: 2317 或 00919")
-    add_shares = col_s.number_input("持有股數 (張*1000):", min_value=1, value=1000, step=100)
-    add_cost = col_c.number_input("平均買入成本價 (元):", min_value=0.1, value=100.0, step=1.0)
+    add_ticker = col_t.text_input("➕ 輸入代號新增到帳戶庫存:", placeholder="例如: 00919 或 6596")
+    add_shares = col_s.number_input("持有股數:", min_value=1, value=1000, step=100)
+    add_cost = col_c.number_input("買入成本價:", min_value=0.1, value=100.0, step=1.0)
     submit_btn = col_b.form_submit_button("確認新增持股")
     
     if submit_btn and add_ticker:
         t_clean = add_ticker.strip().upper()
-        with st.spinner(f"正在連線交易所驗證並下載 {t_clean} 的真實市價..."):
-            fetched_res = fetch_ticker_data_safely(t_clean)
-            
-        if fetched_res is not None:
-            std_code = fetched_res['代號']
-            existing = False
-            for item in st.session_state.my_portfolio:
-                if item["代號"] == std_code:
-                    total_shares = item["股數"] + add_shares
-                    item["成本"] = round(((item["成本"] * item["股數"]) + (add_cost * add_shares)) / total_shares, 2)
-                    item["股數"] = total_shares
-                    existing = True
-                    break
-            if not existing:
-                st.session_state.my_portfolio.append({"代號": std_code, "股數": add_shares, "成本": round(add_cost, 2)})
-            st.success(f"✅ 真實數據對接成功！庫存已加入：{fetched_res['名稱']} ({std_code})")
-            st.rerun()
-        else:
-            st.error(f"❌ 查無此代號！無法在交易所找到 '{t_clean}'，請確認上市櫃代號是否輸入正確。")
+        if t_clean not in st.session_state.my_portfolio:
+            with st.spinner("正在連網驗證..."):
+                test_res = fetch_ticker_data_safely(t_clean)
+            if test_res:
+                st.session_state.my_portfolio.append({"代號": test_res['代號'], "股數": add_shares, "成本": round(add_cost, 2)})
+                st.success(f"✅ 成功將真實資產 {test_res['名稱']} 納入帳戶對帳單！")
+                st.rerun()
+            else:
+                st.error("❌ 查無此代號，請確認輸入。")
 
 if st.button("🗑️ 清空所有個人庫存數據"):
     st.session_state.my_portfolio = []
     st.rerun()
 
-# 庫存大盤損益動態分析計算
-user_universe = []
-if len(st.session_state.my_portfolio) > 0:
+# 庫存對帳渲染
+if len(st.session_state.my_portfolio) > 0 and not df_master_market.empty:
     portfolio_rows = []
     total_market_value = 0
     total_cost_value = 0
     
     for item in st.session_state.my_portfolio:
-        user_universe.append(item['代號'])
-        r_info = fetch_ticker_data_safely(item['代號'])
-        if r_info is not None:
-            current_market_val = r_info['即時價位'] * item['股數']
-            current_cost_val = item['成本'] * item['股數']
-            unrealized_profit = current_market_val - current_cost_val
-            roi_pct = (unrealized_profit / current_cost_val) * 100 if current_cost_val > 0 else 0.0
+        r_info = df_master_market[df_master_market['代號'] == item['代號']]
+        if not r_info.empty:
+            r = r_info.iloc[0]
+            m_val = r['即時價位'] * item['股數']
+            c_val = item['成本'] * item['股數']
+            profit = m_val - c_val
+            roi = (profit / c_val) * 100 if c_val > 0 else 0.0
             
-            total_market_value += current_market_val
-            total_cost_value += current_cost_val
-            
+            total_market_value += m_val
+            total_cost_value += c_val
             portfolio_rows.append({
-                "代號": item['代號'], "名稱": r_info['名稱'], "買入成本": item['成本'],
-                "即時市價": r_info['即時價位'], "目前股數": item['股數'],
-                "目前市值 (元)": round(current_market_val, 0), "未實現損益": round(unrealized_profit, 0),
-                "報酬率 (%)": round(roi_pct, 2), "夏普值": r_info['夏普值'], "Beta值": r_info['Beta值']
+                "代號": item['代號'], "名稱": r['名稱'], "買入成本": item['成本'], "即時市價": r['即時價位'],
+                "目前股數": item['股數'], "目前市值 (元)": round(m_val, 0), "未實現損益": round(profit, 0),
+                "報酬率 (%)": round(roi, 2), "夏普值": r['夏普值'], "Beta值": r['Beta值']
             })
             
     if portfolio_rows:
         df_p_summary = pd.DataFrame(portfolio_rows)
-        df_p_summary["資產權重 (%)"] = round((df_p_summary["目前市值 (元)"] / total_market_value) * 100, 1) if total_market_value > 0 else 0.0
-        
-        total_profit = total_market_value - total_cost_value
-        total_roi = (total_profit / total_cost_value) * 100 if total_cost_value > 0 else 0.0
+        df_p_summary["資產權重 (%)"] = round((df_p_summary["目前市值 (元)"] / total_market_value) * 100, 1)
         
         st.subheader("💰 您的資產綜合即時對帳單")
         col_m1, col_m2, col_m3 = st.columns(3)
         col_m1.metric("庫存總市值", f"${int(total_market_value):,} 元")
-        col_m2.metric("總未實現損益", f"+${int(total_profit):,}" if total_profit >= 0 else f"-${int(abs(total_profit)):,}", f"{round(total_roi, 2)}%")
+        col_m2.metric("總未實現損益", f"+${int(total_market_value-total_cost_value):,}" if (total_market_value-total_cost_value) >= 0 else f"-${int(abs(total_market_value-total_cost_value)):,}", f"{round(((total_market_value-total_cost_value)/total_cost_value)*100, 2)}%")
         col_m3.metric("投入總本金", f"${int(total_cost_value):,} 元")
         
-        st.dataframe(
-            df_p_summary[["代號", "名稱", "買入成本", "即時市價", "目前股數", "目前市值 (元)", "未實現損益", "報酬率 (%)", "資產權重 (%)"]],
-            use_container_width=True, hide_index=True
-        )
+        st.dataframe(df_p_summary[["代號", "名稱", "買入成本", "即時市價", "目前股數", "目前市值 (元)", "未實現損益", "報酬率 (%)", "資產權重 (%)"]], use_container_width=True, hide_index=True)
         
-        st.subheader("💡 專家系統庫存體質診斷與策略再平衡建議")
-        weighted_beta = np.sum(df_p_summary["Beta值"] * (df_p_summary["目前市值 (元)"] / total_market_value))
-        weighted_sharpe = np.sum(df_p_summary["夏普值"] * (df_p_summary["目前市值 (元)"] / total_market_value))
-        st.write(f"📊 組合整體加權 **Beta風險值為: {round(weighted_beta, 2)}** | 全包加權 **夏普回報率為: {round(weighted_sharpe, 2)}**")
-        
+        # 權重分佈圓餅圖
         fig_p, ax_p = plt.subplots(figsize=(6, 3))
-        ax_p.pie(df_p_summary["Currently Market Value" if "Currently Market Value" in df_p_summary.columns else "目前市值 (元)"], labels=df_p_summary["名稱"], autopct='%1.1f%%', startangle=90)
+        ax_p.pie(df_p_summary["目前市值 (元)"], labels=df_p_summary["名稱"], autopct='%1.1f%%', startangle=90)
         ax_p.axis('equal')
         st.pyplot(fig_p)
-else:
-    st.info("💡 目前您的個人庫存箱是空的。請在上方欄位輸入您持有的台股/ETF/債券代號與股數成本，系統將會現場連網抓取數據。")
 
 st.markdown("---")
 
 # ==========================================
-# 🔍 區塊二：台股選股篩選器與趨勢畫布
+# 📌 區塊三：個人庫存個股焦點技術指標 K 線圖
 # ==========================================
-st.header("🔍 多功能智能策略快篩池")
-
-if user_universe:
-    rows_market = []
-    for ticker_item in user_universe:
-        res_single = fetch_ticker_data_safely(ticker_item)
-        if res_single: rows_market.append(res_single)
+if not df_master_market.empty:
+    st.subheader("📈 焦點技術指標均線圖")
+    all_available_codes = list(df_master_market['代號'].unique())
+    code_view = st.selectbox("選擇一檔全市場資產繪製均線走勢圖:", options=all_available_codes)
+    
+    target_stock_df = df_master_market[df_master_market['代號'] == code_view]
+    if not target_stock_df.empty:
+        # 使用安全的 .iloc[0] 提取單檔真實歷史日線
+        hist_data = target_stock_df['歷史日線'].values[0]
+        stock_name = target_stock_df['名稱'].values[0]
         
-    if rows_market:
-        df_all_market = pd.DataFrame(rows_market)
-        df_filtered = df_all_market.copy()
+        if hist_data is not None and not hist_data.empty:
+            hist_tail = hist_data.tail(40)
+            fig, ax = plt.subplots(figsize=(10, 4))
+            ax.plot(hist_tail.index, hist_tail['Close'], label='最新成交價', color='#1f77b4', linewidth=2.5)
+            ax.plot(hist_tail.index, hist_tail['Close'].rolling(5).mean(), label='5 MA', color='#ff7f0e', linestyle='--')
+            ax.plot(hist_tail.index, hist_tail['Close'].rolling(10).mean(), label='10 MA', color='#2ca02c', linestyle=':')
+            ax.set_title(f"【{code_view} {stock_name}】近 40 日均線形態")
+            ax.grid(True, alpha=0.3)
+            ax.legend(loc="upper left")
+            st.pyplot(fig)
 
-        if period == "短線" and use_short_ma:
-            df_filtered = df_filtered[(df_filtered['即時價位'] >= df_filtered['5MA']) & (df_filtered['即時價位'] >= df_filtered['10MA'])]
-        elif period == "中線" and use_mid_growth:
-            df_filtered = df_filtered[(df_filtered['類別'] != 'EQUITY') | (df_filtered['營收獲利雙正'] == True)]
-        elif period == "長線":
-            if use_long_yield:
-                df_filtered = df_filtered[df_filtered['現金殖利率(%)'] >= l_yield]
-            if use_long_pe:
-                df_filtered = df_filtered[(df_filtered['類別'] != 'EQUITY') | (df_filtered['本益比'] <= l_pe) | (df_filtered['本益比'].isna())]
-
-        df_filtered = df_filtered[df_filtered['夏普值'] >= l_sharpe]
-        df_filtered = df_filtered[df_filtered['Beta值'] <= combo_beta]
-
-        st.subheader(f"🎯 當前符合【{period} 自訂參數】的自選股篩選結果")
-        if df_filtered.empty:
-            st.warning("⚠️ 目前設定的量化條件較嚴格，您的持股中暫無相符標的。可嘗試放寬指標。")
-        else:
-            st.dataframe(
-                df_filtered[['代號', '名稱', '類別', '即時價位', '漲跌幅(%)', '現金殖利率(%)', '夏普值', 'Beta值']], 
-                use_container_width=True, hide_index=True
-            )
-
-        st.markdown("---")
-
-        # 📌 區塊三：個人庫存個股焦點技術指標 K 線圖
-        st.subheader("📈 焦點技術指標均線圖")
-        code_view = st.selectbox("選擇一檔庫存標的繪製均線K線圖:", options=user_universe)
-        
-        # 安全優化：改用直接條件過濾，澈底杜絕 iloc 造成的當機 Bug
-        target_stock_df = df_all_market[df_all_market['代號'] == code_view]
-        
-        if not target_stock_df.empty:
-            # 穩健提取底層的歷史日線數據
-            hist = target_stock_df['歷史日線'].values[0]
-            stock_name = target_stock_df['名稱'].values[0]
-            
-            if hist is not None and not hist.empty:
-                hist_tail = hist.tail(40)
-                
-                fig, ax = plt.subplots(figsize=(10, 4))
-                ax.plot(hist_tail.index, hist_tail['Close'], label='最新成交價', color='#1f77b4', linewidth=2.5)
-                ax.plot(hist_tail.index, hist_tail['Close'].rolling(5).mean(), label='5 MA (短線強弱線)', color='#ff7f0e', linestyle='--')
-                ax.plot(hist_tail.index, hist_tail['Close'].rolling(10).mean(), label='10 MA', color='#2ca02c', linestyle=':')
-                ax.set_title(f"{code_view} {stock_name} 近 40 日均線走勢")
-                ax.grid(True, alpha=0.3)
-                ax.legend(loc="upper left")
-                st.pyplot(fig)
-            else:
-                st.warning("⚠️ 暫時無法取得該標的的歷史走勢數據。")
-else:
-    st.warning("🔍 策略快篩池與K線圖目前處於隱藏狀態。請先在上方輸入並新增至少一檔真實庫存標的，系統將自動啟動追蹤！")
