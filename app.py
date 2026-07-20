@@ -37,11 +37,11 @@ def save_portfolio_to_browser():
 # ==========================================
 # 🛠️ 2. 側邊欄 / 行動端頂部控制面板
 # ==========================================
-st.sidebar.markdown("<h4 style='font-size:16px;'>⚙️ 專家級動態選股指標</h4>", unsafe_layout=True)
+st.sidebar.markdown("<h4 style='font-size:16px;'>⚙️ 專家級動態選股指標</h4>", unsafe_allow_html=True)
 period = st.sidebar.radio("⏱️ 策略操作週期模板選擇", options=["短線", "中線", "長線"], index=2)
 
 st.sidebar.markdown("---")
-st.sidebar.markdown("<h5 style='font-size:14px;'>🎛️ 濾網參數自由自訂 (皆為選擇)</h5>", unsafe_layout=True)
+st.sidebar.markdown("<h5 style='font-size:14px;'>🎛️ 濾網參數自由自訂 (皆為選擇)</h5>", unsafe_allow_html=True)
 
 # 動態條件開關與數值滑桿
 use_short_ma = st.sidebar.checkbox("短線：必須站上 5MA 與 10MA", value=False)
@@ -53,7 +53,7 @@ l_yield = st.sidebar.slider(" ↳ 殖利率下限要求 (%)", min_value=0.0, max
 use_long_pe = st.sidebar.checkbox("長線：啟用本益比上限過濾", value=False)
 l_pe = st.sidebar.slider(" ↳ 本益比上限要求 (倍)", min_value=8.0, max_value=25.0, value=15.0, step=1.0)
 
-# 【新增追加：股價高低動態過濾開關（皆為選擇）】
+# 股價高低動態過濾開關
 use_price_filter = st.sidebar.checkbox("💰 啟用股價區間過濾", value=False)
 price_mode = st.sidebar.selectbox(" ↳ 價格限制方向:", options=["低於指定股價 (以下)", "高於指定股價 (以上)"])
 target_price_limit = st.sidebar.slider(" ↳ 股價篩選門檻 (元)", min_value=10.0, max_value=1200.0, value=100.0, step=10.0)
@@ -161,8 +161,7 @@ df_master_market = run_three_stage_universal_filter()
 # ==========================================
 st.markdown("<h3 style='font-size:18px; font-weight:bold; margin-bottom:5px;'>🔍 全台股智能多功能快篩池</h3>", unsafe_allow_html=True)
 
-# 【新增追加：股號與股價多功能即時快篩框（皆為選擇）】
-col_f1, col_f2 = st.columns([1, 1])
+col_f1, col_f2 = st.columns(2)
 use_search_filter = col_f1.checkbox("🎯 啟用特定股號查詢", value=False)
 search_ticker_code = col_f1.text_input(" ↳ 輸入欲查詢代號:", placeholder="例如: 2330", label_visibility="collapsed")
 
@@ -202,12 +201,12 @@ if not df_master_market.empty:
     else:
         st.dataframe(df_top_5[['代號', '名稱', '類別', '即時價位', '漲跌幅(%)', '現金殖利率(%)', '夏普值', 'Beta值']], use_container_width=True, hide_index=True)
 else:
-    st.warning("⏳ 正在初始化雲端大盤資料庫...")
+    st.warning("⏳ 正在大盤資料庫現場過濾中，請稍候...")
 
 st.markdown("<hr style='margin:10px 0px;'>", unsafe_allow_html=True)
 
 # ==========================================
-# 💼 區塊二：個人庫存記帳與資產對帳單 (極致縮小手機版 UI)
+# 💼 區塊二：個人庫存記帳與資產對帳單
 # ==========================================
 st.markdown("<h3 style='font-size:18px; font-weight:bold; margin-bottom:5px;'>💼 我的實時庫存記帳與優化</h3>", unsafe_allow_html=True)
 
@@ -244,7 +243,7 @@ with st.form("add_stock_form", clear_on_submit=True):
 
 if st.button("🗑️ 清空所有庫存數據"):
     st.session_state.my_portfolio = []
-    st.javascript("localStorage.removeItem('my_portfolio_data');")
+    st_javascript("localStorage.removeItem('my_portfolio_data');")
     st.rerun()
 
 user_universe = [item['代號'] for item in st.session_state.my_portfolio]
@@ -271,14 +270,13 @@ if len(st.session_state.my_portfolio) > 0:
         df_p_summary = pd.DataFrame(portfolio_rows)
         df_p_summary["資產權重 (%)"] = round((df_p_summary["目前市值 (元)"] / total_market_value) * 100, 1)
         
-        # 微型量化看板 (已修正變數對齊)
         st.markdown(f"<p style='font-size:12px; color:gray;'>📊 即時對帳單摘要：</p>", unsafe_allow_html=True)
         col_m1, col_m2, col_m3 = st.columns(3)
         col_m1.markdown(f"<div style='font-size:11px;color:gray;'>總市值</div><div style='font-size:13px;font-weight:bold;'>${int(total_market_value):,}</div>", unsafe_allow_html=True)
         col_m2.markdown(f"<div style='font-size:11px;color:gray;'>總損益</div><div style='font-size:13px;font-weight:bold;color:{'red' if (total_market_value-total_cost_value)>=0 else 'green'}'>${int(total_market_value-total_cost_value):,} ({round(((total_market_value-total_cost_value)/total_cost_value)*100,1)}%)</div>", unsafe_allow_html=True)
         col_m3.markdown(f"<div style='font-size:11px;color:gray;'>投入本金</div><div style='font-size:13px;font-weight:bold;'>${int(total_cost_value):,}</div>", unsafe_allow_html=True)
         
-        st.dataframe(df_p_summary[["代號", "名稱", "買入成本", "即時市價", "目前股數", "目前市值 (元)", "未實現損益", "報酬率 (%)"]], use_container_width=True, hide_index=True)
+        st.dataframe(df_p_summary[["代號", "名稱", "買入成本", "即時市價", "目前股數", " brass目前市值 (元)", "未實現損益", "報酬率 (%)"]].rename(columns={" brass目前市值 (元)": "目前市值 (元)"}), use_container_width=True, hide_index=True)
         
         fig_p, ax_p = plt.subplots(figsize=(5, 2.2))
         ax_p.pie(df_p_summary["目前市值 (元)"], labels=df_p_summary["名稱"], autopct='%1.1f%%', startangle=90, textprops={'fontsize': 8})
