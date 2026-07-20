@@ -240,17 +240,27 @@ if user_universe:
         # 📌 區塊三：個人庫存個股焦點技術指標 K 線圖
         st.subheader("📈 焦點技術指標均線圖")
         code_view = st.selectbox("選擇一檔庫存標的繪製均線K線圖:", options=user_universe)
-        main_stock = df_all_market[df_all_market['代號'] == code_view]
-        if not main_stock.empty:
-            r = main_stock.iloc
-            hist = r['歷史日線'].tail(40)
+        
+        # 安全優化：改用直接條件過濾，澈底杜絕 iloc 造成的當機 Bug
+        target_stock_df = df_all_market[df_all_market['代號'] == code_view]
+        
+        if not target_stock_df.empty:
+            # 穩健提取底層的歷史日線數據
+            hist = target_stock_df['歷史日線'].values[0]
+            stock_name = target_stock_df['名稱'].values[0]
             
-            fig, ax = plt.subplots(figsize=(10, 4))
-            ax.plot(hist.index, hist['Close'], label='最新成交價', color='#1f77b4', linewidth=2.5)
-            ax.plot(hist.index, hist['Close'].rolling(5).mean(), label='5 MA (短線強弱線)', color='#ff7f0e', linestyle='--')
-            ax.plot(hist.index, hist['Close'].rolling(10).mean(), label='10 MA', color='#2ca02c', linestyle=':')
-            ax.grid(True, alpha=0.3)
-            ax.legend(loc="upper left")
-            st.pyplot(fig)
+            if hist is not None and not hist.empty:
+                hist_tail = hist.tail(40)
+                
+                fig, ax = plt.subplots(figsize=(10, 4))
+                ax.plot(hist_tail.index, hist_tail['Close'], label='最新成交價', color='#1f77b4', linewidth=2.5)
+                ax.plot(hist_tail.index, hist_tail['Close'].rolling(5).mean(), label='5 MA (短線強弱線)', color='#ff7f0e', linestyle='--')
+                ax.plot(hist_tail.index, hist_tail['Close'].rolling(10).mean(), label='10 MA', color='#2ca02c', linestyle=':')
+                ax.set_title(f"{code_view} {stock_name} 近 40 日均線走勢")
+                ax.grid(True, alpha=0.3)
+                ax.legend(loc="upper left")
+                st.pyplot(fig)
+            else:
+                st.warning("⚠️ 暫時無法取得該標的的歷史走勢數據。")
 else:
     st.warning("🔍 策略快篩池與K線圖目前處於隱藏狀態。請先在上方輸入並新增至少一檔真實庫存標的，系統將自動啟動追蹤！")
