@@ -107,31 +107,48 @@ def fetch_ticker_data_safely(t):
         }
     except: return None
 
+## ==========================================
+# 📊 4. 全市場高效率篩選核心
 # ==========================================
-# 📊 4. 建立「台灣全證券核心池骨幹」並現場在線爬取
-# ==========================================
-# 包含：上市個股、上櫃個股、市值ETF、高股息ETF、美債債券、台股REITs
-master_universe = [
-    '2330', '2317', '2454', '2881', '2308',  # 上市大盤
-    '5347', '6596', '8069', '3293', '6147',  # 上櫃個股
-    '0050', '006208', '00878', '0056', '00919', # 熱門個股與高股息ETF
-    '00679B', '00772B', '00720B',            # 長短期債券ETF
-    '01002T', '01004T'                       # 台灣不動產投資信託 REITs
-]
 
-# 整合使用者手動買進的股票，避免漏網
-full_fetch_list = list(set(master_universe + [item["代號"] for item in st.session_state.my_portfolio]))
+# 1. 讀取全台股列表 (請建立一個包含兩列: 'Ticker' 的 CSV 檔)
+# 格式範例: 2330.TW, 2317.TW, ...
+@st.cache_data(ttl=86400) # 快取一天，避免重複抓取
+def get_all_tickers():
+    # 這裡若無 CSV，可先用 yf 抓取部分代表性清單
+    # 實務上請準備一個 full_list.csv 放在同目錄
+    return ['2330.TW', '2317.TW', '2454.TW', '0050.TW', '00878.TW'] 
 
-with st.spinner("⏳ 正在自動從交易所地毯式抓取所有上市、上櫃、ETF、債券與 REITs 即時行情..."):
-    all_market_rows = []
-    for ticker in full_fetch_list:
-        res = fetch_ticker_data_safely(ticker)
-        if res: all_market_rows.append(res)
-        
-    if all_market_rows:
-        df_master_market = pd.DataFrame(all_market_rows)
-    else:
-        df_master_market = pd.DataFrame()
+all_tickers = get_all_tickers()
+
+with st.spinner("⏳ 正在進行全市場高速掃描..."):
+    # 批次下載價格數據
+    price_df = yf.download(all_tickers, period="3mo", group_by='ticker', progress=False)
+    
+    # 計算初步技術指標 (技術面篩選)
+    candidates = []
+    for ticker in all_tickers:
+        try:
+            # 提取該檔股票的歷史數據
+            stock_data = price_df[ticker]
+            close = stock_data['Close']
+            ma5 = close.rolling(5).mean().iloc[-1]
+            ma10 = close.rolling(10).mean().iloc[-1]
+            
+            # 初步篩選：例如必須站上 5MA
+            if close.iloc[-1] > ma5:
+                candidates.append(ticker.replace('.TW', '').replace('.TWO', ''))
+        except: continue
+
+# 2. 針對篩選出的「候選清單」補齊財報 (只抓 20-50 檔，速度極快)
+st.write(f"已篩選出 {len(candidates)} 檔候選標的，正在補齊財務數據...")
+
+refined_market_data = []
+for ticker in candidates:
+    res = fetch_ticker_data_safely(ticker) # 此處呼叫您原有的財報抓取函式
+    if res: refined_market_data.append(res)
+
+df_master_market = pd.DataFrame(refined_market_data)
 
 # ==========================================
 # 🔍 區塊一：多功能智能策略快篩池（已全面自動聯動）
